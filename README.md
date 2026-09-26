@@ -137,3 +137,32 @@ The CP-SAT planner's reported metrics are derived from the data, not hard-coded:
 * **Frontend**: React 18, TypeScript, Tailwind CSS, Lucide React, Recharts, React Router v6, Axios
 * **Backend**: FastAPI, Google OR-Tools CP-SAT / Railway Constraint Engine, SQLAlchemy ORM, Pydantic v2
 * **Database**: SQLite (with WAL mode enabled) / Native PostgreSQL via `DATABASE_URL`
+
+---
+
+## 🎬 SIH Demo Script (5 minutes)
+
+1. **Login** as `hod001 / hod123` (Higher HOD). If the amber "Offline demo mode" banner shows, the frontend is running without the backend — all features below still work against bundled data.
+2. **AI Block Planner → Master Corridor Gantt** (top of page): pick a corridor, see trains (blue) vs maintenance blocks (gray/green) on a 24h timeline. Hover any bar for details.
+3. **Single-Request Window Planner**: pick a request → *Generate Plan* → the engine scans 45+ candidate windows and shows the recommended window with **per-constraint counts** (train/resource/manpower/block conflicts, safety PASS, operational impact), the **timetable strip**, feasible vs rejected windows **with reasons**, and **WHY THIS PLAN**.
+4. **AI Fusion Engine** (same page): expand a proposed fusion → *WHY THIS FUSION* reasons, candidate jobs, computed savings (blocks 3→1, occupation minutes) → *Apply Fusion* creates a real `FB-*` block (requires HOD authority; server re-validates constraints and refuses with explicit reasons if anything changed).
+5. **Audit Timeline** (bottom of planner): the full lifecycle of a request from real audit rows.
+6. **Approve flow**: Block Management → approve the fused block (Higher HOD only; Lower HOD gets 403 server-side).
+7. **MCR Verification**: close/rework an MCR and watch the request status + asset status update.
+8. **Dashboard**: KPIs, Asset Risk Intelligence (explainable factor breakdowns), Data Fabric (integration contracts), corridor monitor.
+
+## ✅ How to verify everything yourself
+
+**Backend (real engine):**
+```bash
+python -m uvicorn backend.main:app --reload          # auto-seeds on first boot
+# open http://127.0.0.1:8000/docs — try:
+# POST /api/ai/plan-request        {"request_id": 12}
+# GET  /api/ai/fusion-opportunities
+# POST /api/ai/apply-fusion        {"request_ids": [...]}   (needs HOD token)
+# GET  /api/audit/timeline?request_id=12
+# GET  /api/gantt/corridor/1
+```
+**Frontend:** `cd frontend && npm run dev` → http://localhost:5173
+**Production:** https://track-shield-ai-theta.vercel.app/higher/ai-planner
+**Connect the real backend:** deploy `render.yaml` (Render Blueprint), set `CORS_ORIGINS` + `TRACKSHIELD_SECRET_KEY`, then set `VITE_API_URL` in Vercel and redeploy. The demo banner disappears when `/api/health` answers.
