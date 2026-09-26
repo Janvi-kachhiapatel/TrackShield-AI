@@ -6,6 +6,7 @@ import { StatusBadge } from '../../components/common/StatusBadge';
 import { RejectReasonModal } from '../../components/modals/RejectReasonModal';
 import { WindowPlannerPanel } from '../../components/planner/WindowPlannerPanel';
 import { AuditTimeline } from '../../components/planner/AuditTimeline';
+import { MasterGantt } from '../../components/gantt/MasterGantt';
 import {
   Bot,
   Zap,
@@ -183,6 +184,9 @@ export const AIBlockPlanner: React.FC = () => {
         title="AI Maintenance Block Planner"
         subpath="Mathematical CP-SAT Constraint Optimization & Multi-Department Block Fusion"
       />
+
+      {/* MASTER CORRIDOR GANTT — 24h trains vs blocks */}
+      <MasterGantt />
 
       {/* 9-STAGE PIPELINE BANNER */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">

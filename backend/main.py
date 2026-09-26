@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.database import engine, Base
 from backend.routers import (
     auth, master, requests, ai_planner, blocks, mcr, live_ops, analytics,
-    risk, data_fabric, planner
+    risk, data_fabric, planner, gantt
 )
 
 # Ensure tables exist
@@ -63,6 +63,7 @@ app.include_router(analytics.router)
 app.include_router(risk.router)
 app.include_router(data_fabric.router)
 app.include_router(planner.router)
+app.include_router(gantt.router)
 
 
 @app.get("/api/health")
