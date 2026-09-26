@@ -238,6 +238,10 @@ class BlockActionRequest(BaseModel):
     new_start_time: Optional[str] = None
     new_end_time: Optional[str] = None
 
+class ApplyFusionRequest(BaseModel):
+    request_ids: List[int]
+    notes: Optional[str] = None
+
 class GeneratePlanRequest(BaseModel):
     target_date: Optional[str] = None
     horizon_days: int = 7

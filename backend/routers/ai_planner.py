@@ -11,7 +11,11 @@ from backend.schemas import (
     ConflictResponse, BlockResponse, BlockJobInfo,
     GeneratePlanRequest, GeneratePlanResponse
 )
-from backend.routers.auth import get_current_user
+from backend.routers.auth import get_current_user, require_roles
+from backend.fusion_engine import (
+    FusionCandidate, FusionGroup, group_candidates, evaluate_group,
+)
+from backend.schemas import ApplyFusionRequest
 
 # Check if OR-Tools native library can be loaded without OS Application Control restriction
 try:
@@ -59,49 +63,278 @@ def get_conflicts(corridor_id: Optional[int] = None, db: Session = Depends(get_d
         ))
     return res
 
-@router.get("/fusion-opportunities")
-def get_fusion_opportunities(db: Session = Depends(get_db)):
-    # Group pending/approved requests by corridor to find multi-department synergies
+def _collect_fusion_inputs(db: Session):
+    """Gather candidate requests plus the context the engine evaluates against."""
+    # Requests already assigned to a live block (AI_RECOMMENDED or further)
+    # are committed work and must never be fused again.
+    committed_request_ids = {
+        bj.request_id
+        for bj in db.query(BlockJob).join(MaintenanceBlock, BlockJob.block_id == MaintenanceBlock.id)
+        .filter(MaintenanceBlock.status.in_(["AI_RECOMMENDED", "APPROVED", "ACTIVE"]))
+        .all()
+    }
+
     requests = db.query(MaintenanceRequest).filter(
-        MaintenanceRequest.status.in_(["NEW", "INSPECTED", "AI_ANALYZED", "APPROVED"])
+        MaintenanceRequest.status.in_(["NEW", "INSPECTED", "AI_ANALYZED", "APPROVED"]),
+        MaintenanceRequest.id.notin_(committed_request_ids) if committed_request_ids else True,
     ).all()
 
-    by_corridor: Dict[int, List[MaintenanceRequest]] = {}
-    for r in requests:
-        by_corridor.setdefault(r.corridor_id, []).append(r)
+    candidates = [
+        FusionCandidate(
+            id=r.id,
+            problem_id=r.problem_id,
+            corridor_id=r.corridor_id,
+            department_id=r.department_id,
+            department_code=r.department.code if r.department else "UNKNOWN",
+            priority=r.priority,
+            requested_date=r.requested_date,
+            requested_start_time=r.requested_start_time,
+            requested_end_time=r.requested_end_time,
+            max_duration_hours=r.max_duration_hours,
+            isolation_required=r.isolation_required,
+            resources_required=r.resources_required,
+            manpower_required=r.manpower_required,
+        )
+        for r in requests
+    ]
 
-    opportunities = []
-    for cid, req_list in by_corridor.items():
-        depts = set(r.department.code for r in req_list if r.department)
-        if len(req_list) >= 2 and len(depts) >= 2:
-            corr = db.query(Corridor).filter(Corridor.id == cid).first()
-            durations = [r.max_duration_hours for r in req_list]
-            est_duration = max(durations) if durations else 2.0
-            block_reduction = round((1.0 - (1.0 / len(req_list))) * 100.0, 1)
+    from backend.models import Manpower
+    manpower_rows = db.query(Manpower).all()
+    dept_ceiling: Dict[int, int] = {}
+    for m in manpower_rows:
+        dept_ceiling[m.department_id] = dept_ceiling.get(m.department_id, 0) + max(0, m.available_count)
 
-            opportunities.append({
-                "corridor_id": cid,
-                "corridor_name": corr.name if corr else f"Corridor #{cid}",
-                "track_type": corr.track_type if corr else "Double Line",
-                "request_count": len(req_list),
-                "departments": list(depts),
-                "estimated_duration_hours": est_duration,
-                "block_reduction_percent": block_reduction,
-                "requests": [
-                    {
-                        "id": r.id,
-                        "problem_id": r.problem_id,
-                        "department": r.department.name if r.department else "Dept",
-                        "department_code": r.department.code if r.department else "ELEC",
-                        "asset": r.asset.name if r.asset else "Asset",
-                        "work_description": r.work_description,
-                        "priority": r.priority,
-                        "duration_hours": r.max_duration_hours
-                    } for r in req_list[:5]
-                ],
-                "ai_recommendation": f"Combine {len(req_list)} maintenance jobs into one coordinated maintenance block. Estimated block reduction: {block_reduction}%."
-            })
-    return opportunities
+    unresolved = {
+        c.request_id for c in db.query(Conflict).filter(
+            Conflict.is_resolved == False,  # noqa: E712
+            Conflict.severity == "CRITICAL",
+            Conflict.request_id.isnot(None),
+        ).all()
+    }
+
+    trains = db.query(TrainSchedule).all()
+    trains_by_corridor: Dict[int, List[Dict[str, Any]]] = {}
+    for t in trains:
+        trains_by_corridor.setdefault(t.corridor_id, []).append({
+            "train_no": t.train_no, "departure_time": t.departure_time, "priority": t.priority,
+        })
+
+    return requests, candidates, dept_ceiling, unresolved, trains_by_corridor
+
+
+@router.get("/fusion-opportunities")
+def get_fusion_opportunities(db: Session = Depends(get_db)):
+    """
+    Real constraint-aware fusion analysis (backend/fusion_engine.py):
+    same-corridor + same-date candidates are checked against hard
+    constraints (window fit, conflicts, manpower) and scored on soft
+    factors. Returns PROPOSED groups with computed savings and full
+    reason trails, plus REJECTED groups with the exact failing rules.
+    """
+    requests, candidates, dept_ceiling, unresolved, trains_by_corridor = _collect_fusion_inputs(db)
+    groups = group_candidates(candidates)
+
+    corr_cache: Dict[int, Corridor] = {c.id: c for c in db.query(Corridor).all()}
+
+    proposed, rejected = [], []
+    for g in groups:
+        result = evaluate_group(g, trains_by_corridor.get(g.corridor_id, []), dept_ceiling, unresolved)
+        corr = corr_cache.get(g.corridor_id)
+        result["corridor_name"] = corr.name if corr else f"Corridor #{g.corridor_id}"
+        result["corridor_code"] = corr.code if corr else None
+        result["track_type"] = corr.track_type if corr else None
+        result["requests"] = [
+            {
+                "id": r.id,
+                "problem_id": r.problem_id,
+                "department": r.department.name if r.department else "Dept",
+                "department_code": r.department.code if r.department else "ELEC",
+                "asset": r.asset.name if r.asset else "Asset",
+                "work_description": r.work_description,
+                "priority": r.priority,
+                "duration_hours": r.max_duration_hours,
+                "isolation_required": r.isolation_required,
+                "resources_required": r.resources_required,
+            }
+            for r in requests if r.id in result["request_ids"]
+        ]
+        (proposed if result["status"] == "PROPOSED" else rejected).append(result)
+
+    proposed.sort(key=lambda x: x["compatibility_score"], reverse=True)
+    rejected.sort(key=lambda x: len(x["rejection_reasons"]))
+
+    return {
+        "proposed": proposed,
+        "rejected": rejected,
+        "engine": {
+            "type": "deterministic constraint evaluation + weighted compatibility scoring",
+            "hard_constraints": [
+                "same corridor",
+                "same date",
+                "window fit for combined possession",
+                "no unresolved CRITICAL conflicts",
+                "manpower within department ceiling (with safety margin)",
+            ],
+            "soft_factors": {
+                "department_diversity": 0.30,
+                "shared_isolation": 0.25,
+                "timetable_headroom": 0.20,
+                "priority_alignment": 0.15,
+                "resource_overlap": 0.10,
+            },
+            "min_compatibility_score": 40.0,
+        },
+    }
+
+
+@router.post("/apply-fusion", response_model=BlockResponse)
+def apply_fusion(
+    payload: ApplyFusionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("HIGHER_HOD", "ADMIN")),
+):
+    """
+    Human-approved fusion application (Higher HOD / Admin only).
+
+    The fusion is RE-VALIDATED SERVER-SIDE against the live data before any
+    block is created — the client cannot force an invalid fusion. If the
+    group fails any hard constraint now (conflict appeared, manpower dropped,
+    window changed), the API returns 409 with the failing rules instead of a
+    block. On success it creates ONE AI_RECOMMENDED block containing all the
+    jobs; the block still requires explicit HOD approval like any other.
+    """
+    if len(payload.request_ids) < 2:
+        raise HTTPException(status_code=400, detail="Fusion requires at least 2 requests")
+
+    requests, candidates, dept_ceiling, unresolved, trains_by_corridor = _collect_fusion_inputs(db)
+
+    by_id = {r.id: r for r in requests}
+    missing = [rid for rid in payload.request_ids if rid not in by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Requests not found or not in a fusable state: {missing}")
+
+    chosen = [c for c in candidates if c.id in set(payload.request_ids)]
+    if len(chosen) != len(payload.request_ids):
+        raise HTTPException(status_code=409, detail="One or more requests are no longer in a fusable status")
+
+    # All chosen must belong to one (corridor, date) group for fusion.
+    group_keys = {(c.corridor_id, c.requested_date) for c in chosen}
+    if len(group_keys) != 1:
+        raise HTTPException(status_code=409, detail="All requests must share the same corridor and date for fusion")
+
+    corridor_id, requested_date = group_keys.pop()
+    group = FusionGroup(corridor_id=corridor_id, requested_date=requested_date, candidates=chosen)
+    result = evaluate_group(group, trains_by_corridor.get(corridor_id, []), dept_ceiling, unresolved)
+
+    if result["status"] != "PROPOSED":
+        raise HTTPException(status_code=409, detail={
+            "message": "Fusion rejected by constraint re-validation",
+            "rejection_reasons": result["rejection_reasons"],
+        })
+
+    corr = db.query(Corridor).filter(Corridor.id == corridor_id).first()
+    dept_codes = result["departments"]
+
+    # Computed window for the fused possession.
+    start_min = int(result["fused_start_time"][:2]) * 60 + int(result["fused_start_time"][3:])
+    end_min = int(result["fused_end_time"][:2]) * 60 + int(result["fused_end_time"][3:])
+
+    # Block code: next sequential ID.
+    base = db.query(MaintenanceBlock).count() + 105
+    block_code = f"FB-{base}"
+    while db.query(MaintenanceBlock).filter(MaintenanceBlock.block_id == block_code).first():
+        base += 1
+        block_code = f"FB-{base}"
+
+    new_block = MaintenanceBlock(
+        block_id=block_code,
+        corridor_id=corridor_id,
+        start_time=f"{result['fused_start_time']} AM" if start_min < 720 else result["fused_start_time"],
+        end_time=f"{result['fused_end_time']} AM" if end_min < 720 else result["fused_end_time"],
+        duration_hours=result["fused_duration_hours"],
+        status="AI_RECOMMENDED",
+        safety_clearance=True,
+        isolation_type=(
+            "Combined 25kV OHE Power Block & Track Disconnection"
+            if result["shared_isolation"] or "ELEC" in dept_codes
+            else "Track Disconnection"
+        ),
+        train_impact="LOW" if not result["trains_in_window"] else ("MEDIUM" if len(result["trains_in_window"]) <= 2 else "HIGH"),
+        notes=(
+            f"AI Fusion of {len(chosen)} jobs ({', '.join(result['problem_ids'])}) on {requested_date}. "
+            f"Compatibility score {result['compatibility_score']}. "
+            f"Saves {result['original_duration_minutes'] - int(result['fused_duration_hours'] * 60)} min of corridor occupation "
+            f"({result['duration_reduction_percent']}% duration reduction). {payload.notes or ''}"
+        ).strip(),
+    )
+    db.add(new_block)
+    db.flush()
+
+    job_infos = []
+    for idx, r in enumerate(sorted(chosen, key=lambda c: c.id)):
+        db.add(BlockJob(block_id=new_block.id, request_id=r.id, job_order=idx + 1))
+        req = by_id[r.id]
+        job_infos.append(BlockJobInfo(
+            request_id=req.id,
+            problem_id=req.problem_id,
+            department_code=req.department.code if req.department else "ELEC",
+            department_name=req.department.name if req.department else "Department",
+            asset_name=req.asset.name if req.asset else "Track Asset",
+            work_description=req.work_description,
+            priority=req.priority,
+            duration_hours=req.max_duration_hours,
+        ))
+
+    rationales = result["reasons"] + [
+        f"✓ Applied by {current_user.name} (Higher HOD) after constraint re-validation at apply time",
+    ]
+    db.add(AIRecommendation(
+        block_id=new_block.id,
+        title=f"AI Fused Possession ({block_code}) — {len(chosen)} jobs, score {result['compatibility_score']}",
+        rationales=rationales,
+        block_reduction_percent=result["block_reduction_percent"],
+        train_delay_mitigation_minutes=max(0, result["original_duration_minutes"] - int(result["fused_duration_hours"] * 60)),
+        asset_availability_impact=result["compatibility_score"],
+    ))
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        user_name=current_user.name,
+        role=current_user.role,
+        action="APPLY_AI_FUSION",
+        entity_type="BLOCK",
+        entity_id=block_code,
+        details=(
+            f"Applied AI fusion of {result['problem_ids']} into {block_code} "
+            f"(score {result['compatibility_score']}, "
+            f"{result['original_duration_minutes']}min -> {int(result['fused_duration_hours'] * 60)}min)."
+        ),
+    ))
+
+    db.commit()
+    db.refresh(new_block)
+
+    return BlockResponse(
+        id=new_block.id,
+        block_id=new_block.block_id,
+        corridor_id=new_block.corridor_id,
+        corridor_code=corr.code if corr else None,
+        corridor_name=corr.name if corr else None,
+        start_time=new_block.start_time,
+        end_time=new_block.end_time,
+        duration_hours=new_block.duration_hours,
+        status=new_block.status,
+        safety_clearance=new_block.safety_clearance,
+        isolation_type=new_block.isolation_type,
+        train_impact=new_block.train_impact,
+        notes=new_block.notes,
+        jobs_count=len(job_infos),
+        departments=dept_codes,
+        jobs=job_infos,
+        rationales=rationales,
+        created_at=new_block.created_at,
+    )
+
 
 @router.post("/generate-plan", response_model=GeneratePlanResponse)
 def generate_best_schedule(

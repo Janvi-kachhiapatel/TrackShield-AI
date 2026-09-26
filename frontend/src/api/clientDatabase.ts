@@ -97,6 +97,9 @@ const saveBlocks = (blocks: MaintenanceBlock[]) => {
   } catch {}
 };
 
+const fmtMin = (m: number): string =>
+  `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
 export const handleClientDatabaseFallback = (config?: AxiosRequestConfig): AxiosResponse | null => {
   if (!config || !config.url) return null;
 
@@ -464,28 +467,79 @@ export const handleClientDatabaseFallback = (config?: AxiosRequestConfig): Axios
   }
 
   if (pathname === '/ai/fusion-opportunities' || pathname === 'ai/fusion-opportunities') {
-    return makeResponse([
-      {
-        id: 1,
-        corridor_code: 'NDLS-GZB',
-        corridor_name: 'New Delhi → Ghaziabad Junction',
-        compatible_departments: ['Electrical (TRD)', 'Signalling (SMMS)', 'Civil (TMS)'],
-        estimated_combined_window: '02:00 – 04:00 AM (2.0 Hrs)',
-        jobs_bundled: 3,
-        train_impact_reduction_percent: 66,
-        safety_isolation: 'Single Traction Disconnection + S&T Route Release'
-      },
-      {
-        id: 2,
-        corridor_code: 'GZB-ALJN',
-        corridor_name: 'Ghaziabad Junction → Aligarh Junction',
-        compatible_departments: ['Civil (TMS)', 'Telecommunications'],
-        estimated_combined_window: '01:30 – 03:30 AM (2.0 Hrs)',
-        jobs_bundled: 2,
-        train_impact_reduction_percent: 50,
-        safety_isolation: 'Adjacent Track Speed Caution 30 km/h'
+    // Offline fallback: mirror the real backend contract (proposed/rejected)
+    // using the bundled dump, with the same hard-constraint semantics
+    // (same corridor + date, window fit, no critical conflict). Computed
+    // from the dump — not a canned percentage.
+    const reqs = (dbDump.maintenance_requests || []) as any[];
+    const openStatuses = ['NEW', 'INSPECTED', 'AI_ANALYZED', 'APPROVED'];
+    const conflicts = (dbDump.conflicts || []) as any[];
+    const criticalReqIds = new Set(
+      conflicts.filter(c => c.severity === 'CRITICAL' && !c.is_resolved && c.request_id).map(c => c.request_id)
+    );
+    const groups: Record<string, any[]> = {};
+    for (const r of reqs) {
+      if (!openStatuses.includes(r.status)) continue;
+      const key = `${r.corridor_id}|${r.requested_date}`;
+      (groups[key] = groups[key] || []).push(r);
+    }
+    const proposed: any[] = [];
+    const rejected: any[] = [];
+    for (const [, list] of Object.entries(groups)) {
+      if (list.length < 2) continue;
+      const toMin = (t: string) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+      const starts = list.map(r => toMin(r.requested_start_time));
+      const ends = list.map(r => toMin(r.requested_end_time));
+      const widest = Math.max(...ends) - Math.min(...starts);
+      const fusedMin = Math.round(Math.max(...list.map(r => r.max_duration_hours)) * 60);
+      const originalMin = list.reduce((s, r) => s + r.max_duration_hours * 60, 0);
+      const conflicted = list.filter(r => criticalReqIds.has(r.id));
+      const base = {
+        corridor_id: list[0].corridor_id,
+        requested_date: list[0].requested_date,
+        request_ids: list.map(r => r.id),
+        problem_ids: list.map(r => r.problem_id),
+        departments: [...new Set(list.map(r => r.department_code))],
+        original_blocks: list.length,
+        original_duration_minutes: Math.round(originalMin),
+        requests: list.map(r => ({
+          id: r.id,
+          problem_id: r.problem_id,
+          department_code: r.department_code,
+          work_description: r.work_description,
+          priority: r.priority,
+          duration_hours: r.max_duration_hours,
+        })),
+      };
+      if (conflicted.length > 0) {
+        rejected.push({ ...base, status: 'REJECTED', rejection_reasons: [
+          `Unresolved CRITICAL conflict(s) reference ${conflicted.map(r => r.problem_id).join(', ')}`
+        ]});
+      } else if (fusedMin > widest) {
+        rejected.push({ ...base, status: 'REJECTED', rejection_reasons: [
+          `Combined possession needs ${Math.round(fusedMin / 60 * 10) / 10}h but the widest requested window is only ${widest} min`
+        ]});
+      } else {
+        proposed.push({ ...base, status: 'PROPOSED',
+          fused_duration_hours: Math.round(fusedMin / 60 * 10) / 10,
+          fused_start_time: fmtMin(Math.min(...starts)),
+          fused_end_time: fmtMin(Math.max(...ends)),
+          
+          duration_reduction_percent: Math.round(100 * (1 - fusedMin / originalMin) * 10) / 10,
+          block_reduction_percent: Math.round(100 * (1 - 1 / list.length) * 10) / 10,
+          compatibility_score: Math.min(90, 40 + list.length * 12 + (list.some(r => r.isolation_required) ? 10 : 0)),
+          reasons: [
+            `Same track section — all ${list.length} jobs share corridor ${list[0].corridor_id}`,
+            `Same maintenance date (${list[0].requested_date}) with overlapping windows`,
+            `One possession of ${Math.round(fusedMin / 60 * 10) / 10}h replaces ${list.length} separate blocks`,
+          ],
+          trains_in_window: [],
+          shared_isolation: list.some(r => r.isolation_required),
+        });
       }
-    ]);
+    }
+    proposed.sort((a, b) => b.compatibility_score - a.compatibility_score);
+    return makeResponse({ proposed, rejected, engine: { type: 'offline fallback — bundled data', demo: true } });
   }
 
   if (pathname === '/ai/generate-plan' || pathname === 'ai/generate-plan') {

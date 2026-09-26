@@ -29,6 +29,9 @@ export const AIBlockPlanner: React.FC = () => {
   const [requests, setRequests] = useState<MaintenanceRequest[]>([]);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [fusionOpportunities, setFusionOpportunities] = useState<any[]>([]);
+  const [fusionData, setFusionData] = useState<{ proposed: any[]; rejected: any[] } | null>(null);
+  const [expandedFusion, setExpandedFusion] = useState<string | null>(null);
+  const [applyingFusion, setApplyingFusion] = useState(false);
   const [blocks, setBlocks] = useState<MaintenanceBlock[]>([]);
   const [activePlan, setActivePlan] = useState<any | null>(null);
 
@@ -66,12 +69,17 @@ export const AIBlockPlanner: React.FC = () => {
       const [reqRes, confRes, fuseRes, blkRes] = await Promise.all([
         api.get<MaintenanceRequest[]>('/requests', { params: { limit: 15 } }),
         api.get<Conflict[]>('/ai/conflicts'),
-        api.get<any[]>('/ai/fusion-opportunities'),
+        api.get<{ proposed: any[]; rejected: any[] }>('/ai/fusion-opportunities'),
         api.get<MaintenanceBlock[]>('/blocks', { params: { limit: 10 } })
       ]);
       setRequests(reqRes.data);
       setConflicts(confRes.data);
-      setFusionOpportunities(fuseRes.data);
+      setFusionOpportunities(fuseRes.data?.proposed || []);
+      if (fuseRes.data && typeof fuseRes.data === 'object' && Array.isArray(fuseRes.data.proposed)) {
+        setFusionData(fuseRes.data);
+      } else {
+        setFusionData(null); // offline fallback shape — engine card hides demo data
+      }
       setBlocks(blkRes.data);
       if (blkRes.data.length > 0) {
         setActivePlan(blkRes.data[0]);
@@ -112,6 +120,34 @@ export const AIBlockPlanner: React.FC = () => {
     } finally {
       setIsSolving(false);
       setSolverStep(0);
+    }
+  };
+
+  const handleApplyFusion = async (op: any) => {
+    setApplyingFusion(true);
+    try {
+      const res = await api.post('/ai/apply-fusion', {
+        request_ids: op.request_ids,
+        notes: `Applied from planner (score ${op.compatibility_score})`
+      });
+      const b = res.data;
+      alert(
+        `Fusion applied: ${b.block_id} created (status ${b.status}).\n` +
+        `${b.jobs_count} jobs on ${b.corridor_name} • ${b.duration_hours}h possession.\n` +
+        `The block now requires explicit HOD approval.`
+      );
+      fetchData();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      if (detail && typeof detail === 'object' && detail.rejection_reasons) {
+        alert(`Fusion rejected by server-side re-validation:\n${detail.rejection_reasons.join('\n')}`);
+      } else if (typeof detail === 'string') {
+        alert(detail);
+      } else {
+        alert('Fusion failed. Please retry.');
+      }
+    } finally {
+      setApplyingFusion(false);
     }
   };
 
@@ -287,64 +323,141 @@ export const AIBlockPlanner: React.FC = () => {
             </div>
           </div>
 
-          {/* BLOCK FUSION UI */}
+          {/* AI FUSION ENGINE — live constraint-aware analysis */}
           <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-4">
             <div className="flex items-center justify-between pb-2 border-b border-blue-100 mb-3">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-blue-600" />
                 <h4 className="text-xs font-bold text-blue-950 uppercase tracking-wider">
-                  Block Fusion Engine (Multi-Department Coordinated Work)
+                  AI Fusion Engine — Constraint-Aware Multi-Department Fusion
                 </h4>
               </div>
               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                Estimated Stoppage Reduction: -66.7%
+                {fusionData ? `${fusionData.proposed.length} proposed • ${fusionData.rejected.length} rejected` : 'Analyzing...'}
               </span>
             </div>
 
-            <div className="p-3.5 bg-blue-50/50 border border-blue-200 rounded-xl space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <span className="text-xs font-bold text-slate-900 block">
-                    Corridor: Station A → Station B (NDLS–GZB Trunk Section)
-                  </span>
-                  <p className="text-xs text-slate-600">
-                    Electrical (OHE Insulator) + Signal (Point Machine 102) + Telecom (OFC Cable)
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-1 rounded-lg border border-emerald-200 shadow-xs">
-                  <span>1 Consolidated Block instead of 3</span>
-                </div>
-              </div>
+            {!fusionData && (
+              <p className="text-xs text-slate-500 py-3">Running compatibility analysis on pending requests...</p>
+            )}
 
-              <div className="grid grid-cols-4 gap-2 text-center text-xs font-semibold">
-                <div className="p-2 bg-white rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 block font-bold">Compatible?</span>
-                  <span className="text-emerald-600 font-bold">✓ YES</span>
-                </div>
-                <div className="p-2 bg-white rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 block font-bold">Same Corridor?</span>
-                  <span className="text-emerald-600 font-bold">✓ YES</span>
-                </div>
-                <div className="p-2 bg-white rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 block font-bold">Overlapping Time?</span>
-                  <span className="text-emerald-600 font-bold">✓ YES (02:30 AM)</span>
-                </div>
-                <div className="p-2 bg-white rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-400 block font-bold">Shared Resources?</span>
-                  <span className="text-emerald-600 font-bold">✓ YES (TW-04)</span>
-                </div>
-              </div>
+            {fusionData && fusionData.proposed.length === 0 && fusionData.rejected.length === 0 && (
+              <p className="text-xs text-slate-500 py-3">No multi-job groups on the same corridor &amp; date — nothing to fuse.</p>
+            )}
 
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-xs text-slate-600 italic">
-                  "Combine 3 maintenance jobs into one maintenance block."
-                </span>
-                <span className="text-xs font-bold text-blue-700">
-                  Block Reduction: 66.7%
-                </span>
+            {/* PROPOSED FUSIONS */}
+            {fusionData?.proposed.map((op: any, idx: number) => (
+              <div key={`p-${idx}`} className="mb-3 p-3.5 bg-blue-50/50 border border-blue-200 rounded-xl space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">
+                      {op.corridor_code} — {op.corridor_name}
+                    </span>
+                    <p className="text-xs text-slate-600">
+                      {op.departments.join(' + ')} • {op.original_blocks} jobs on {op.requested_date}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-emerald-700 bg-white px-2.5 py-1 rounded-lg border border-emerald-200 shadow-xs">
+                      Score {op.compatibility_score}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedFusion(expandedFusion === `p-${idx}` ? null : `p-${idx}`)}
+                      className="p-1 rounded hover:bg-blue-100 transition"
+                      aria-label="Toggle fusion details"
+                    >
+                      <ChevronDown className={`w-4 h-4 text-blue-600 transition ${expandedFusion === `p-${idx}` ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center text-xs font-semibold">
+                  <div className="p-2 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 block font-bold">Blocks</span>
+                    <span className="text-slate-900 font-bold">{op.original_blocks} → 1</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 block font-bold">Occupation</span>
+                    <span className="text-slate-900 font-bold">{op.original_duration_minutes} → {Math.round(op.fused_duration_hours * 60)} min</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 block font-bold">Duration cut</span>
+                    <span className="text-emerald-600 font-bold">{op.duration_reduction_percent}%</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 block font-bold">Window</span>
+                    <span className="text-slate-900 font-bold">{op.fused_start_time}–{op.fused_end_time}</span>
+                  </div>
+                  <div className="p-2 bg-white rounded-lg border border-slate-200">
+                    <span className="text-[10px] text-slate-400 block font-bold">Conflicts</span>
+                    <span className="text-emerald-600 font-bold">0</span>
+                  </div>
+                </div>
+
+                {expandedFusion === `p-${idx}` && (
+                  <div className="space-y-2">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">WHY THIS FUSION?</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-xs">
+                      {op.reasons.map((r: string, ri: number) => (
+                        <div key={ri} className="p-2 rounded-lg bg-emerald-50/60 border border-emerald-100 text-emerald-900 font-medium">{r}</div>
+                      ))}
+                    </div>
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider pt-1">Candidate jobs</div>
+                    <div className="space-y-1">
+                      {op.requests.map((r: any) => (
+                        <div key={r.id} className="flex items-center justify-between text-[11px] p-1.5 rounded bg-white border border-slate-200">
+                          <span className="font-mono font-bold text-slate-800">{r.problem_id}</span>
+                          <span className="text-[10px] font-bold px-1.5 rounded bg-blue-100 text-blue-900">{r.department_code}</span>
+                          <span className="text-slate-600 truncate max-w-[220px]">{r.work_description}</span>
+                          <span className="font-mono text-slate-500">{r.duration_hours}h</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-[10px] text-slate-500">
+                        Trains in window: {op.trains_in_window.length ? op.trains_in_window.join(', ') : 'none'} •
+                        Safety constraints: PASSED
+                      </span>
+                      <button
+                        type="button"
+                        disabled={applyingFusion}
+                        onClick={() => handleApplyFusion(op)}
+                        className="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{applyingFusion ? 'Validating & Applying...' : 'Apply Fusion'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            ))}
+
+            {/* REJECTED FUSIONS — explainability for WHY NOT */}
+            {fusionData?.rejected.length > 0 && (
+              <div className="mt-2">
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5" />
+                  Rejected candidates — why not fused
+                </div>
+                <div className="space-y-1.5">
+                  {fusionData.rejected.slice(0, 4).map((op: any, idx: number) => (
+                    <div key={`r-${idx}`} className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-800">{op.corridor_code} • {op.departments.join(' + ')} • {op.original_blocks} jobs</span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 uppercase">Not fusable</span>
+                      </div>
+                      {op.rejection_reasons.map((r: string, ri: number) => (
+                        <p key={ri} className="text-red-700 mt-0.5">{r}</p>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
+
 
           {/* OPTIMIZATION RESULT CARD */}
           {activePlan && (
