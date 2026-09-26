@@ -688,9 +688,22 @@ export const handleClientDatabaseFallback = (config?: AxiosRequestConfig): Axios
   }
 
   if (pathname === '/auth/me' || pathname === 'auth/me') {
-    const token = localStorage.getItem('railway_token') || 'hod001';
-    const user = dbDump.users.find(u => u.emp_id.toLowerCase() === token.toLowerCase()) || dbDump.users[0];
-    return makeResponse(user);
+    // Static-deploy offline mode: the signed token cannot be validated here,
+    // so resolve the session from the stored user snapshot (name + role).
+    // Tokens are opaque server-signed blobs and must never be parsed as IDs.
+    const savedUser = localStorage.getItem('railway_user');
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        const match = dbDump.users.find(
+          u => u.emp_id.toLowerCase() === String(parsed.emp_id || '').toLowerCase()
+            && u.name === parsed.name
+            && u.role === parsed.role
+        );
+        if (match) return makeResponse(match);
+      } catch {}
+    }
+    return makeResponse(dbDump.users[0]);
   }
 
   return null;

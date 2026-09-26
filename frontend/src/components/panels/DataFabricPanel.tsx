@@ -49,15 +49,22 @@ export const DataFabricPanel: React.FC = () => {
       .get<StatusResponse>('/data-fabric/status')
       .then((res) => {
         if (cancelled) return;
-        setStatus(res.data);
-        // Load full contracts lazily for the detail views.
-        return api.get<{ adapters: AdapterContract[] }>('/data-fabric/adapters');
+        // Static deployments without a backend serve HTML; guard non-object data.
+        if (res.data && typeof res.data === 'object' && Array.isArray(res.data.interfaces)) {
+          setStatus(res.data);
+          // Load full contracts lazily for the detail views.
+          return api.get<{ adapters: AdapterContract[] }>('/data-fabric/adapters');
+        }
+        setError('Integration layer requires the backend (unavailable in static demo mode)');
+        return undefined;
       })
       .then((res) => {
         if (!res || cancelled) return;
-        const map: Record<string, AdapterContract> = {};
-        for (const a of res.data.adapters) map[a.key] = a;
-        setContracts(map);
+        if (res.data && typeof res.data === 'object' && Array.isArray(res.data.adapters)) {
+          const map: Record<string, AdapterContract> = {};
+          for (const a of res.data.adapters) map[a.key] = a;
+          setContracts(map);
+        }
       })
       .catch(() => {
         if (!cancelled) setError('Integration layer unavailable');

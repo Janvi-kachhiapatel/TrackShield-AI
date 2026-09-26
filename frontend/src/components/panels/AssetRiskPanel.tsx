@@ -61,7 +61,12 @@ export const AssetRiskPanel: React.FC = () => {
     api
       .get<RiskSummary>('/risk/summary')
       .then((res) => {
-        if (!cancelled) setSummary(res.data);
+        // Static deployments without a backend serve HTML; guard non-object data.
+        if (!cancelled && res.data && typeof res.data === 'object' && res.data.band_distribution) {
+          setSummary(res.data);
+        } else if (!cancelled) {
+          setError('Risk engine requires the backend (unavailable in static demo mode)');
+        }
       })
       .catch(() => {
         if (!cancelled) setError('Risk engine unavailable');

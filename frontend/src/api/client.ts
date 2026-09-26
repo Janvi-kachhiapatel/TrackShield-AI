@@ -52,16 +52,18 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
-    // Only fall back to the bundled database when the backend is truly
-    // unreachable (network error/timeout) or an SPA rewrite returned HTML.
-    // Real backend rejections (401/403/400/404/500 JSON) must propagate so
-    // auth failures and validation errors surface instead of being masked.
+    // Fall back to the bundled database only when a real backend clearly is
+    // NOT answering: network failure/timeout, an SPA rewrite returned HTML,
+    // or the static host rejected the HTTP method (405 — e.g. POST to a
+    // static-only deployment). Real backend rejections (401/403/400/404/500
+    // JSON) must propagate so auth failures and validation errors surface.
     const status = error.response?.status;
     const contentType: string = error.response?.headers?.['content-type'] || '';
     const isHtmlError = contentType.includes('text/html');
     const isNetworkError = !error.response;
+    const isMethodNotAllowed = status === 405;
 
-    if (isNetworkError || isHtmlError) {
+    if (isNetworkError || isHtmlError || isMethodNotAllowed) {
       try {
         const fallbackResponse = handleClientDatabaseFallback(error.config);
         if (fallbackResponse) {
