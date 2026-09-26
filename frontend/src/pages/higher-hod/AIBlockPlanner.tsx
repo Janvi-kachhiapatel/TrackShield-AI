@@ -4,6 +4,8 @@ import api from '../../api/client';
 import { BreadcrumbContext } from '../../components/layout/BreadcrumbContext';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { RejectReasonModal } from '../../components/modals/RejectReasonModal';
+import { WindowPlannerPanel } from '../../components/planner/WindowPlannerPanel';
+import { AuditTimeline } from '../../components/planner/AuditTimeline';
 import {
   Bot,
   Zap,
@@ -323,6 +325,9 @@ export const AIBlockPlanner: React.FC = () => {
             </div>
           </div>
 
+          {/* SINGLE-REQUEST WINDOW PLANNER + TIMETABLE */}
+          <WindowPlannerPanel requests={requests} />
+
           {/* AI FUSION ENGINE — live constraint-aware analysis */}
           <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-4">
             <div className="flex items-center justify-between pb-2 border-b border-blue-100 mb-3">
@@ -559,6 +564,9 @@ export const AIBlockPlanner: React.FC = () => {
           onSuccess={fetchData}
         />
       )}
+
+      {/* AUDIT TIMELINE — full lifecycle for the selected request */}
+      <AuditTimeline requestId={requests[0]?.id ?? null} />
     </div>
   );
 };

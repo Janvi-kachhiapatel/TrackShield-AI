@@ -542,6 +542,56 @@ export const handleClientDatabaseFallback = (config?: AxiosRequestConfig): Axios
     return makeResponse({ proposed, rejected, engine: { type: 'offline fallback — bundled data', demo: true } });
   }
 
+  if (pathname === '/ai/plan-request' || pathname === 'ai/plan-request') {
+    // Offline fallback: run the same window-scan logic over the bundled dump.
+    const body = typeof config.data === 'string' ? JSON.parse(config.data || '{}') : (config.data || {});
+    const req = (dbDump.maintenance_requests || []).find((r: any) => r.id === body.request_id);
+    if (!req) return makeResponse({ detail: 'Request not found' }, 404);
+    const toMin = (t: string) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+    const dur = Math.round((body.duration_minutes || req.max_duration_hours * 60));
+    const trains = (dbDump.train_schedules || []).filter((t: any) => t.corridor_id === req.corridor_id);
+    const crossings = trains.map((t: any) => toMin(t.departure_time));
+    const clear = (s: number, e: number) => crossings.filter(tm => !(e + 10 <= tm || s >= tm + 10)).length;
+    const candidates: any[] = [];
+    for (let s = 0; s + dur <= 1440; s += 30) {
+      const tc = clear(s, s + dur);
+      candidates.push({ s, e: s + dur, tc });
+    }
+    const feasible = candidates.filter(c => c.tc === 0);
+    const rejected = candidates.filter(c => c.tc > 0);
+    const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const best = feasible[0];
+    return makeResponse({
+      request: {
+        id: req.id, problem_id: req.problem_id,
+        corridor_name: (dbDump.corridors || []).find((c: any) => c.id === req.corridor_id)?.name,
+        department_code: req.department_code, priority: req.priority,
+        duration_minutes: dur,
+      },
+      planning_engine: { type: 'offline fallback window scan (bundled data)', demo: true, grid_minutes: 30 },
+      selected: best ? {
+        start_time: fmt(best.s), end_time: fmt(best.e), duration_minutes: dur,
+        train_conflicts: 0, resource_conflicts: 0, manpower_conflicts: 0,
+        existing_block_conflicts: 0, safety_constraints: 'PASS', operational_impact: 'LOW',
+      } : null,
+      candidate_count: candidates.length,
+      feasible_count: feasible.length,
+      rejected_count: rejected.length,
+      feasible_windows: feasible.slice(0, 8).map((c: any) => ({
+        start_time: fmt(c.s), end_time: fmt(c.e), operational_impact: 'LOW', impact_score: 0,
+      })),
+      rejected_windows: rejected.slice(0, 12).map((c: any) => ({
+        start_time: fmt(c.s), end_time: fmt(c.e), train_conflicts: c.tc, existing_block_conflicts: 0,
+        reasons: [`${c.tc} train conflict(s)`],
+      })),
+      why: best ? [
+        `${feasible.length} of ${candidates.length} candidate windows are fully feasible (offline demo data)`,
+        `Selected ${fmt(best.s)}–${fmt(best.e)}: zero train conflicts on this corridor`,
+      ] : [],
+      grid_minutes: 30,
+    });
+  }
+
   if (pathname === '/ai/generate-plan' || pathname === 'ai/generate-plan') {
     return makeResponse({
       status: 'SUCCESS',
