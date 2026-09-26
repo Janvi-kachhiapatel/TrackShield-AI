@@ -10,6 +10,22 @@ from backend.routers import (
 # Ensure tables exist
 Base.metadata.create_all(bind=engine)
 
+# Auto-seed the synthetic dataset when running against an empty database
+# (fresh cloud deploys). Skipped when data already exists.
+def _maybe_seed() -> None:
+    from backend.database import SessionLocal
+    from backend.models import Department
+    db = SessionLocal()
+    try:
+        if db.query(Department).count() == 0:
+            print("[INFO] Empty database detected - seeding synthetic dataset...")
+            from backend.seed_data import seed_database
+            seed_database()
+    finally:
+        db.close()
+
+_maybe_seed()
+
 app = FastAPI(
     title="TrackShield AI — Railway Asset & Possession Intelligence API",
     description=(

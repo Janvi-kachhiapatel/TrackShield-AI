@@ -48,6 +48,8 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 * API Documentation: `http://127.0.0.1:8000/docs`
 * Health Check: `http://127.0.0.1:8000/api/health`
 
+> The backend auto-seeds the synthetic dataset on first boot if the database is empty — no manual seed step needed on cloud deploys.
+
 ### 2. Frontend (React 18 + TypeScript + Tailwind CSS + Lucide + Recharts)
 ```powershell
 # In a new terminal:
@@ -57,6 +59,20 @@ cd "d:\SIH 2026 2.0\frontend"
 npm.cmd run dev -- --host 127.0.0.1 --port 5173
 ```
 * Open in browser: **`http://127.0.0.1:5173`**
+
+### 3. Deployment (full-stack demo with the real CP-SAT engine)
+
+**Frontend → Vercel** (this repo's `vercel.json` already builds `frontend/dist`):
+1. Import the GitHub repo in Vercel (root directory = repo root).
+2. Optional env var: `VITE_API_URL=https://<your-backend-host>` (e.g. the Render URL below). Without it, the app runs in **offline demo mode** using the bundled synthetic dataset — login works, changes stay in the browser.
+
+**Backend → Render** (blueprint included):
+1. Render Dashboard → **New → Blueprint** → point at this repo. `render.yaml` provisions the free web service, installs `backend/requirements.txt`, starts uvicorn, and health-checks `/api/health`.
+2. Set env vars on the service: `CORS_ORIGINS=https://<your-vercel-project>.vercel.app` and `TRACKSHIELD_SECRET_KEY` (`openssl rand -hex 32`).
+3. On first boot the API auto-seeds the synthetic dataset (70 stations, 200 corridors, 400 assets, 500 trains, 200 requests).
+4. Point the Vercel env var `VITE_API_URL` at the Render URL and redeploy — the amber "offline demo mode" banner disappears once `/api/health` answers.
+
+> **Why a banner?** The frontend is transparent about its data source: a visible notice states when data is bundled/local-only versus served by the live engine. Login always requires valid credentials; there is no silent privileged session in either mode.
 
 ---
 

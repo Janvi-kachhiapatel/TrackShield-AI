@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { TopBar } from './components/layout/TopBar';
 import { Sidebar } from './components/layout/Sidebar';
+import { DemoModeBanner } from './components/common/DemoModeBanner';
 
 // Pages
 import { Login } from './pages/Login';
@@ -29,6 +30,7 @@ const Layout: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 text-slate-800">
+      <DemoModeBanner />
       <TopBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />

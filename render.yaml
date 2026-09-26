@@ -1,0 +1,28 @@
+# Render.com deployment for the TrackShield AI FastAPI backend.
+# Frontend stays on Vercel (static) and talks to this service via
+# VITE_API_URL + the backend's CORS_ORIGINS allowlist.
+#
+# Setup after first deploy:
+#   1. Render Dashboard -> trackshield-ai-api -> Environment
+#   2. Add CORS_ORIGINS = https://<your-vercel-project>.vercel.app
+#      (comma-separated for multiple origins; never use "*")
+#   3. Set TRACKSHIELD_SECRET_KEY to a long random hex string so signed
+#      session tokens survive restarts (openssl rand -hex 32)
+services:
+  - type: web
+    name: trackshield-ai-api
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    # backend/main.py auto-seeds the synthetic dataset on first boot.
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DEMO_MODE
+        value: "true"
+      # Set these two in the Render dashboard (secret + per-deploy value):
+      # - key: TRACKSHIELD_SECRET_KEY  (openssl rand -hex 32)
+      # - key: CORS_ORIGINS            (https://your-app.vercel.app)
