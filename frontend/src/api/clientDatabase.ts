@@ -1,6 +1,10 @@
 import dbDump from '../data/databaseDump.json';
 import { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { MaintenanceRequest, MCRReport, MaintenanceBlock } from '../types';
+import {
+  offlineGoodsForecast, offlineMlPrioritization, offlineMultiHorizonPlan,
+  offlineGantt, offlineRisk, offlineAuditTimeline, offlineDataFabric,
+} from './offlineEngines';
 
 // Persistent client-side storage keys
 const STORAGE_REQUESTS_KEY = 'railway_client_requests';
@@ -129,6 +133,57 @@ export const handleClientDatabaseFallback = (config?: AxiosRequestConfig): Axios
     headers: {},
     config: (config || {}) as any,
   });
+
+  // --- 3b. Multi-Horizon Planning / Forecast / ML / Impact (offline engines) ---
+  if (pathname === '/plans/weekly' || pathname === 'plans/weekly') {
+    return makeResponse(offlineMultiHorizonPlan(7));
+  }
+  if (pathname === '/plans/monthly' || pathname === 'plans/monthly') {
+    return makeResponse(offlineMultiHorizonPlan(30));
+  }
+  if (pathname === '/plans' || pathname === 'plans') {
+    const hd = Number(params.horizon_days) || 7;
+    return makeResponse(offlineMultiHorizonPlan(
+      hd,
+      params.window_start !== undefined ? Number(params.window_start) : undefined,
+      params.window_end !== undefined ? Number(params.window_end) : undefined,
+    ));
+  }
+  if (pathname === '/forecast/goods' || pathname === 'forecast/goods') {
+    return makeResponse(offlineGoodsForecast(Number(params.days) || 7, params.corridor_id ? Number(params.corridor_id) : undefined));
+  }
+  if (pathname === '/ml/risk-prioritization' || pathname === 'ml/risk-prioritization') {
+    return makeResponse(offlineMlPrioritization());
+  }
+  if (pathname === '/impact/simulation' || pathname === 'impact/simulation') {
+    return makeResponse(offlineMultiHorizonPlan(7).impact_simulation);
+  }
+
+  // --- 3c. Gantt (offline corridor timeline) ---
+  const ganttMatch = pathname.match(/^\/?gantt\/corridor\/(\d+)\/?$/);
+  if (ganttMatch) {
+    const g = offlineGantt(Number(ganttMatch[1]));
+    if (g) return makeResponse(g);
+    return makeResponse({ detail: 'Corridor not found' }, 404);
+  }
+
+  // --- 3d. Risk engine (offline) ---
+  if (pathname === '/risk/assets' || pathname === 'risk/assets' ||
+      pathname === '/risk/summary' || pathname === 'risk/summary' ||
+      pathname === '/risk/corridors' || pathname === 'risk/corridors') {
+    return makeResponse(offlineRisk());
+  }
+
+  // --- 3e. Audit timeline (offline) ---
+  if (pathname === '/audit/timeline' || pathname === 'audit/timeline') {
+    const rid = Number(params.request_id) || 1;
+    return makeResponse(offlineAuditTimeline(rid));
+  }
+
+  // --- 3f. Data fabric (offline) ---
+  if (pathname.startsWith('/data-fabric') || pathname.startsWith('data-fabric')) {
+    return makeResponse(offlineDataFabric());
+  }
 
   // --- 1. Master Data Endpoints ---
   if (pathname === '/master/corridors' || pathname === 'master/corridors') {

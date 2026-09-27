@@ -13,7 +13,9 @@ import {
   CheckSquare,
   BarChart3,
   Database,
-  Layers
+  Layers,
+  CalendarRange,
+  TrendingUp
 } from 'lucide-react';
 
 interface NavItem {
@@ -41,6 +43,8 @@ export const Sidebar: React.FC = () => {
     { name: 'Command Dashboard', path: '/higher/dashboard', icon: LayoutDashboard },
     { name: 'All Requests', path: '/higher/requests', icon: ClipboardList },
     { name: 'AI Block Planner', path: '/higher/ai-planner', icon: Bot, highlight: true },
+    { name: 'Multi-Horizon Plans', path: '/higher/plans', icon: CalendarRange },
+    { name: 'Impact Simulator', path: '/higher/impact', icon: TrendingUp },
     { name: 'Block Management', path: '/higher/blocks', icon: TrafficCone },
     { name: 'Live Operations', path: '/higher/live-ops', icon: AlertOctagon, pulse: true },
     { name: 'MCR Verification', path: '/higher/mcr-verify', icon: CheckSquare },

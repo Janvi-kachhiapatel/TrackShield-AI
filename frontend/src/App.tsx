@@ -20,6 +20,8 @@ import { BlockManagement } from './pages/higher-hod/BlockManagement';
 import { LiveOperations } from './pages/higher-hod/LiveOperations';
 import { MCRVerification } from './pages/higher-hod/MCRVerification';
 import { Analytics } from './pages/higher-hod/Analytics';
+import { MultiHorizonPlans } from './pages/higher-hod/MultiHorizonPlans';
+import { ImpactSimulator } from './pages/higher-hod/ImpactSimulator';
 import { MasterData } from './pages/admin/MasterData';
 
 const Layout: React.FC = () => {
@@ -70,6 +72,8 @@ export const App: React.FC = () => {
             <Route path="/higher/dashboard" element={<CommandDashboard />} />
             <Route path="/higher/requests" element={<AllRequests />} />
             <Route path="/higher/ai-planner" element={<AIBlockPlanner />} />
+            <Route path="/higher/plans" element={<MultiHorizonPlans />} />
+            <Route path="/higher/impact" element={<ImpactSimulator />} />
             <Route path="/higher/blocks" element={<BlockManagement />} />
             <Route path="/higher/live-ops" element={<LiveOperations />} />
             <Route path="/higher/mcr-verify" element={<MCRVerification />} />

@@ -44,7 +44,7 @@ export const MasterGantt: React.FC = () => {
       .get<Array<{ id: number; code: string; name: string }>>('/master/corridors', { params: { limit: 60 } })
       .then((res) => {
         if (cancelled) return;
-        const list = (res.data || []).filter((c) => c && c.id);
+        const list = Array.isArray(res.data) ? res.data.filter((c) => c && c.id) : [];
         setCorridors(list);
         if (list.length > 0) setCorridorId((prev) => prev ?? list[0].id);
       })
@@ -63,7 +63,15 @@ export const MasterGantt: React.FC = () => {
     api
       .get<GanttData>(`/gantt/corridor/${corridorId}`)
       .then((res) => {
-        if (!cancelled) setData(res.data);
+        if (cancelled) return;
+        // Validate shape: a static-host rewrite can hand back a string even
+        // with HTTP 200 — never feed that into state that renders .corridor.
+        const d = res.data;
+        if (d && typeof d === 'object' && d.corridor && Array.isArray(d.rows)) {
+          setData(d);
+        } else {
+          setError('Gantt data unavailable (backend required for live view)');
+        }
       })
       .catch(() => {
         if (!cancelled) setError('Gantt data unavailable (backend required for live view)');

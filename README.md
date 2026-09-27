@@ -108,6 +108,15 @@ The CP-SAT planner's reported metrics are derived from the data, not hard-coded:
 * `GET /api/data-fabric/adapters/{key}/sample` — live sample per adapter
 * `GET /api/data-fabric/status` — interface health board
 
+### Multi-Horizon Planning, ML Prioritization & Impact Simulation (v3.1)
+* **`GET /api/plans/weekly` / `GET /api/plans/monthly` / `GET /api/plans?horizon_days=7|30`** — optimized block plans over 7/30-day horizons. Each day bundles cross-department jobs onto shared corridor-days (fusion-like), respects manpower ceilings with 20% headroom, and **defers non-critical work away from freight-dense days** (COA goods-train forecast consulted). The parameterized endpoint doubles as a **what-if engine**: pass `window_start`/`window_end` to re-optimize with a different maintenance window.
+* **`GET /api/forecast/goods?days=7|30`** — COA freight-path forecast per corridor per day (deterministic synthetic model of the Control Office feed; swap-in point for a real connector, see `backend/forecast_engine.py`).
+* **`GET /api/ml/risk-prioritization`** — a real **logistic regression trained by gradient descent on every request** (`backend/ml_prioritization.py`, no pickled artifacts) over 400 assets × 6 features (health, age, criticality, inspection recency, open work, corridor traffic). P(failure) **weights the planner objective**, and every asset ships per-feature contribution breakdowns.
+* **`GET /api/impact/simulation`** — quantified **baseline (decentralized manual planning) vs optimized** comparison: blocks eliminated, train-minutes saved, availability gain — with the model assumptions printed on the UI.
+* **Frontend pages**: `/higher/plans` (Multi-Horizon Plans: weekly/monthly toggle, forecast bars, expandable day cards, what-if window simulator, CSV export for the control office) and `/higher/impact` (Impact Simulator with side-by-side KPIs and forecast strip).
+* **Offline engines** (`frontend/src/api/offlineEngines.ts`): faithful TypeScript ports of the forecast/ML/planner logic so static deployments (Vercel without `VITE_API_URL`) compute the same plans from bundled data — nothing on the deployed demo is canned.
+* **Tests**: `python -m pytest backend/tests/ -v` — 26 tests covering the window planner, fusion engine, multi-horizon planner, ML model, forecast engine and the API layer (including a regression test for the `/api/ai/conflicts` route registration).
+
 ---
 
 ## 👤 Official Demo Accounts

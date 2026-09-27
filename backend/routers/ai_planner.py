@@ -39,6 +39,7 @@ TRAIN_BUFFER_MIN = 10           # clearance minutes either side of a train cross
 MIN_DELAY_PER_TRAIN_MIN = 10    # standard minimum delay for a train crossing an active work site
 
 
+@router.get("/conflicts")
 def get_conflicts(corridor_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(Conflict)
     if corridor_id:

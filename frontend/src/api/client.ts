@@ -31,22 +31,16 @@ api.interceptors.response.use(
        response.data.includes('<!doctype') ||
        response.data.includes('<html'));
 
-    // Or if an API endpoint expected structured JSON but got a plain string or non-array for master/requests
-    const isInvalidApiData =
-      typeof response.data === 'string' &&
-      (response.config?.url?.includes('/master/') ||
-       response.config?.url?.includes('/requests') ||
-       response.config?.url?.includes('/blocks') ||
-       response.config?.url?.includes('/mcr') ||
-       response.config?.url?.includes('/analytics') ||
-       response.config?.url?.includes('/auth/'));
-
-    if (isHtmlResponse || isInvalidApiData) {
+    if (isHtmlResponse) {
+      // The SPA catch-all rewrite answered a /api/* request with index.html.
+      // Never let an HTML string masquerade as API data — that crashes data
+      // consumers expecting objects (e.g. gantt/risk panels reading .corridor).
       const fallbackResponse = handleClientDatabaseFallback(response.config);
       if (fallbackResponse) {
-        console.info(`[Railway Database] Intercepted non-JSON response for ${response.config?.url}, served from bundled database.`);
+        console.info(`[Railway Database] Intercepted HTML-for-API response for ${response.config?.url}, served from bundled database.`);
         return fallbackResponse;
       }
+      return Promise.reject(new Error(`Non-JSON response for ${response.config?.url} (static host has no backend)`));
     }
 
     return response;
@@ -59,11 +53,18 @@ api.interceptors.response.use(
     // JSON) must propagate so auth failures and validation errors surface.
     const status = error.response?.status;
     const contentType: string = error.response?.headers?.['content-type'] || '';
-    const isHtmlError = contentType.includes('text/html');
+    const dataIsHtml = typeof error.response?.data === 'string' &&
+      (String(error.response.data).trim().startsWith('<') || String(error.response.data).includes('<!DOCTYPE'));
+    const isHtmlError = contentType.includes('text/html') || dataIsHtml;
     const isNetworkError = !error.response;
     const isMethodNotAllowed = status === 405;
+    // A real FastAPI backend ALWAYS answers /api/* with JSON — even its errors
+    // carry {"detail": ...}. Any string body from an API call means the static
+    // host answered instead (SPA rewrite, dev-proxy 500, plain-text 404 page).
+    // Treat every non-JSON error body as "backend absent" and fall back.
+    const dataIsNonJsonString = typeof error.response?.data === 'string';
 
-    if (isNetworkError || isHtmlError || isMethodNotAllowed) {
+    if (isNetworkError || isHtmlError || isMethodNotAllowed || dataIsNonJsonString) {
       try {
         const fallbackResponse = handleClientDatabaseFallback(error.config);
         if (fallbackResponse) {
