@@ -2,12 +2,9 @@
 # Frontend stays on Vercel (static) and talks to this service via
 # VITE_API_URL + the backend's CORS_ORIGINS allowlist.
 #
-# Setup after first deploy:
-#   1. Render Dashboard -> trackshield-ai-api -> Environment
-#   2. Add CORS_ORIGINS = https://<your-vercel-project>.vercel.app
-#      (comma-separated for multiple origins; never use "*")
-#   3. Set TRACKSHIELD_SECRET_KEY to a long random hex string so signed
-#      session tokens survive restarts (openssl rand -hex 32)
+# This blueprint is zero-config: it presets the production Vercel origin in
+# CORS_ORIGINS and generates a strong TRACKSHIELD_SECRET_KEY automatically.
+# One-click deploy: https://render.com/deploy?repo=https://github.com/Janvi-kachhiapatel/TrackShield-AI
 services:
   - type: web
     name: trackshield-ai-api
@@ -23,6 +20,10 @@ services:
         value: "3.11.9"
       - key: DEMO_MODE
         value: "true"
-      # Set these two in the Render dashboard (secret + per-deploy value):
-      # - key: TRACKSHIELD_SECRET_KEY  (openssl rand -hex 32)
-      # - key: CORS_ORIGINS            (https://your-app.vercel.app)
+      # Signed-token CORS allowlist: production Vercel domain + local dev.
+      # Add more origins (comma-separated) if the Vercel domain changes.
+      - key: CORS_ORIGINS
+        value: "https://track-shield-ai-theta.vercel.app,http://localhost:5173,http://127.0.0.1:5173"
+      # Render generates a random secret so signed tokens survive restarts.
+      - key: TRACKSHIELD_SECRET_KEY
+        generateValue: true

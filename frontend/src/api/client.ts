@@ -9,7 +9,10 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 3500, // 3.5s timeout so static deployments without backend fall back quickly
+  // Static demo mode (no custom backend) falls back fast; a real backend gets
+  // a generous timeout because Render free-tier instances cold-start after
+  // 15 minutes idle and can take 30-60s to wake on the first request.
+  timeout: customUrl ? 60000 : 3500,
 });
 
 api.interceptors.request.use((config) => {
