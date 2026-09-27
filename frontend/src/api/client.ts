@@ -1,8 +1,11 @@
 import axios from 'axios';
 import { handleClientDatabaseFallback } from './clientDatabase';
 
-const meta = import.meta as any;
-const customUrl = meta.env?.VITE_API_URL || meta.env?.VITE_API_BASE_URL;
+// NOTE: reference import.meta.env directly — Vite statically replaces the
+// exact `import.meta.env.X` pattern at build time. Aliasing it (const meta =
+// import.meta) breaks replacement and env vars silently read as undefined.
+const customUrl: string | undefined =
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
 
 const api = axios.create({
   baseURL: customUrl || '/api',
